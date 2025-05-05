@@ -1,3 +1,4 @@
+/*
 import { useContext, useState } from 'react'
 import { Navigate } from 'react-router-dom';
 import { UserContext } from '@/userContext';
@@ -43,4 +44,4 @@ function AddPhoto(props) {
     )
 }
 
-export default AddPhoto;
+export default AddPhoto;*/

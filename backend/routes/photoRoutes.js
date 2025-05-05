@@ -3,38 +3,86 @@ const router = express.Router();
 const Photo = require("../models/photoModel");
 const Comment = require("../models/commentModel");
 const authMiddleware = require("../middleware/authMiddleware"); // Import the authentication middleware
+const multer = require("multer");
+const path = require("path");
+const crypto = require("crypto"); // For generating unique random names
+const fs = require("fs");
 
-// Upload a new photo (protected route) - Directly storing Base64-encoded image
-router.post("/photos", authMiddleware, async (req, res) => {
-  const { name, imageBase64, contentType } = req.body;
-  const postedBy = req.user.userId; // Get the userId from the decoded token
+const uploadDir = "uploads/images";
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
 
-  // Ensure the Base64 string and contentType are provided
-  if (!imageBase64 || !contentType) {
-    return res
-      .status(400)
-      .json({ message: "Image and content type are required" });
+// Set up multer storage configuration
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    // Store files in the 'uploads/images' folder
+    cb(null, uploadDir);
+  },
+  filename: function (req, file, cb) {
+    // Generate a unique filename using a random string and timestamp
+    const uniqueName =
+      crypto.randomBytes(16).toString("hex") + path.extname(file.originalname); // Random hex string + original extension
+    cb(null, uniqueName); // Set the unique name
+  },
+});
+
+// Initialize multer
+const upload = multer({ storage: storage });
+
+router.post(
+  "/photos",
+  authMiddleware, // Ensure the user is authenticated
+  upload.single("image"), // Handle the image upload
+  async (req, res) => {
+    console.log("Request body:", req.body); // This should not be undefined now
+    console.log("Uploaded file:", req.file); // The uploaded file details
+
+    // Extract the fields from req.body
+    const { name, description } = req.body;
+    const contentType = req.file ? req.file.mimetype : "unknown"; // Get contentType from the file
+
+    // If no image is uploaded, return an error
+    if (!req.file) {
+      return res.status(400).json({ message: "Image is required" });
+    }
+
+    const postedBy = req.user.userId; // Get user ID from token
+
+    // Create the photo document
+    const photo = new Photo({
+      name,
+      imagePath: `/uploads/images/${req.file.filename}`,
+      contentType,
+      description,
+      postedBy,
+    });
+
+    try {
+      // Save the photo to the database
+      await photo.save();
+      res.status(201).json(photo); // Return the photo object after saving
+    } catch (error) {
+      console.error("Error saving photo:", error);
+      res.status(500).json({ message: error.message });
+    }
   }
+);
 
-  const photo = new Photo({
-    name,
-    image: imageBase64, // Store the Base64 string of the image
-    contentType, // Store the content type (e.g., image/jpeg)
-    postedBy,
-  });
-
+// Get all photos (public route)
+router.get("/photos", async (req, res) => {
   try {
-    await photo.save();
-    res.status(201).json(photo);
+    const photos = await Photo.find({ hidden: false }).sort({ createdAt: -1 });
+    res.status(200).json(photos);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 });
 
 // Get all photos (public route)
-router.get("/photos", async (req, res) => {
+router.get("/photos/hot", async (req, res) => {
   try {
-    const photos = await Photo.find().sort({ createdAt: -1 });
+    const photos = await Photo.find({ hidden: false }).sort({ createdAt: -1 });
 
     // Apply time decay to the number of likes
     const currentTime = new Date();
@@ -55,18 +103,85 @@ router.get("/photos", async (req, res) => {
   }
 });
 
-// Like/Dislike photo (protected route)
+// Like/Dislike/Remove like/Remove dislike photo (protected route)
 router.post("/photos/:id/vote", authMiddleware, async (req, res) => {
   const { id } = req.params;
-  const { voteType } = req.body; // 'like' or 'dislike'
+  const { voteType } = req.body; // 'like', 'dislike', 'removeLike', 'removeDislike'
+  const userId = req.user.userId; // Get the userId from the decoded token
 
   try {
     const photo = await Photo.findById(id);
-    if (voteType === "like") {
-      photo.likes += 1;
-    } else if (voteType === "dislike") {
-      photo.dislikes += 1;
+    if (!photo) {
+      return res.status(404).json({ message: "Photo not found" });
     }
+
+    // Handle 'like' action
+    if (voteType === "like") {
+      // Ensure the user hasn't already disliked the photo
+      if (photo.dislikesBy.includes(userId)) {
+        return res.status(400).json({
+          message: "You cannot dislike and like a photo at the same time",
+        });
+      }
+
+      // Add the user to the likesBy array and increment the likes
+      if (photo.likesBy.includes(userId)) {
+        return res
+          .status(400)
+          .json({ message: "You have already liked this photo" });
+      }
+      photo.likesBy.push(userId);
+      photo.likes += 1;
+
+      // Handle 'removeLike' action
+    } else if (voteType === "removeLike") {
+      if (!photo.likesBy.includes(userId)) {
+        return res
+          .status(400)
+          .json({ message: "You haven't liked this photo yet" });
+      }
+
+      // Remove the user from the likesBy array and decrement the likes
+      photo.likesBy = photo.likesBy.filter(
+        (user) => user.toString() !== userId.toString()
+      );
+      photo.likes -= 1;
+
+      // Handle 'dislike' action
+    } else if (voteType === "dislike") {
+      // Ensure the user hasn't already liked the photo
+      if (photo.likesBy.includes(userId)) {
+        return res.status(400).json({
+          message: "You cannot like and dislike a photo at the same time",
+        });
+      }
+
+      // Add the user to the dislikesBy array and increment the dislikes
+      if (photo.dislikesBy.includes(userId)) {
+        return res
+          .status(400)
+          .json({ message: "You have already disliked this photo" });
+      }
+      photo.dislikesBy.push(userId);
+      photo.dislikes += 1;
+
+      // Handle 'removeDislike' action
+    } else if (voteType === "removeDislike") {
+      if (!photo.dislikesBy.includes(userId)) {
+        return res
+          .status(400)
+          .json({ message: "You haven't disliked this photo yet" });
+      }
+
+      // Remove the user from the dislikesBy array and decrement the dislikes
+      photo.dislikesBy = photo.dislikesBy.filter(
+        (user) => user.toString() !== userId.toString()
+      );
+      photo.dislikes -= 1;
+    } else {
+      return res.status(400).json({ message: "Invalid vote type" });
+    }
+
     await photo.save();
     res.status(200).json(photo);
   } catch (error) {
@@ -80,14 +195,30 @@ router.post("/photos/:id/comment", authMiddleware, async (req, res) => {
   const { text } = req.body;
   const postedBy = req.user.userId; // Get the userId from the decoded token
 
-  const comment = new Comment({ text, postedBy, photo: id });
+  // Create a new comment object
+  const comment = new Comment({
+    text,
+    postedBy,
+    photo: id,
+  });
 
   try {
+    // Save the comment to the database
     await comment.save();
+
+    // Find the photo and add the comment ID to its comments array
     const photo = await Photo.findById(id);
     photo.comments.push(comment._id);
     await photo.save();
-    res.status(201).json(comment);
+
+    // Populate the postedBy field to include user details (username)
+    const populatedComment = await Comment.findById(comment._id).populate(
+      "postedBy",
+      "username"
+    );
+
+    // Send the populated comment back to the frontend
+    res.status(201).json(populatedComment);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -105,6 +236,28 @@ router.post("/photos/:id/flag", authMiddleware, async (req, res) => {
     }
     await photo.save();
     res.status(200).json(photo);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.get("/photos/:id", async (req, res) => {
+  const { id } = req.params; // Get the photo ID from the request params
+
+  try {
+    const photo = await Photo.findById(id).populate({
+      path: "comments",
+      populate: {
+        path: "postedBy", // Populate the postedBy field (user details)
+        select: "username", // Only fetch the username
+      },
+    });
+
+    if (!photo) {
+      return res.status(404).json({ message: "Photo not found" });
+    }
+
+    res.status(200).json(photo); // Return the photo object
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
