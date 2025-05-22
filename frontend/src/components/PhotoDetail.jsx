@@ -76,9 +76,39 @@ function PhotoDetail() {
       console.error(err);
     }
   };
-  
-  
-  
+
+  // Flag the photo as inappropriate
+  const handleFlagPhoto = async () => {
+    if (!user) {
+      alert('You must be logged in to flag a photo');
+      return;
+    }
+    
+    try {
+      const response = await fetch(`${apiUrl}/photos/${id}/flag`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${user.token}`,
+        },
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        // Update the flags count
+        setPhoto((prevState) => ({
+          ...prevState,
+          flags: prevState.flags + 1,
+        }));
+      } else {
+        setError(data.message || 'Failed to flag photo');
+      }
+    } catch (err) {
+      setError('An error occurred while flagging the photo');
+      console.error(err);
+    }
+  };
 
   if (error) return <p className="text-red-500">{error}</p>;
   if (!photo) return <p>Loading...</p>;
@@ -97,6 +127,16 @@ function PhotoDetail() {
             <p className="text-sm text-gray-500">Likes: {photo.likes}</p>
             <p className="text-sm text-gray-500">Dislikes: {photo.dislikes}</p>
             <p className="text-sm text-gray-500">Flags: {photo.flags}</p>
+          </div>
+
+          {/* Flag Photo Button */}
+          <div className="mt-4">
+            <button
+              onClick={handleFlagPhoto}
+              className="bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600"
+            >
+              Flag as Inappropriate
+            </button>
           </div>
 
           {/* Comments Section */}
