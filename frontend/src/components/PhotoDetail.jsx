@@ -130,14 +130,17 @@ function PhotoDetail() {
           </div>
 
           {/* Flag Photo Button */}
-          <div className="mt-4">
-            <button
-              onClick={handleFlagPhoto}
-              className="bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600"
-            >
-              Flag as Inappropriate
-            </button>
-          </div>
+          {user && (
+            <div className="mt-4">
+              <button
+                onClick={handleFlagPhoto}
+                className="bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600"
+              >
+                Flag as Inappropriate
+              </button>
+            </div>  
+          )}
+          
 
           {/* Comments Section */}
           <div className="mt-6">
